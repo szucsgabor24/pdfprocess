@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add PDFs · PDF articles</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1d1d1f; --muted: #6b6b70; --bg: #f5f5f7; --card: #fff; --line: #e3e3e8;
+    --accent: #1f6feb; --accent-fg: #fff; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e;
+    --soft-ok: #dafbe1; --soft-warn: #fff8c5; --soft-err: #ffebe9; --soft-info: #ddf4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #ececf1; --muted: #9a9aa3; --bg: #111113; --card: #1c1c1f; --line: #2e2e33;
+      --accent: #4c8dff; --accent-fg: #0b0b0d; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+      --soft-ok: #12261a; --soft-warn: #2a2310; --soft-err: #2d1517; --soft-info: #0f2236;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 40rem; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-top: 16px; }
+  .big { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+         padding: 18px; border-radius: 12px; background: var(--accent); color: var(--accent-fg);
+         font-size: 1.15rem; font-weight: 600; text-decoration: none; }
+  .big:hover { filter: brightness(1.08); }
+  .big:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  ol.steps { margin: 16px 0 0; padding-left: 1.4rem; }
+  ol.steps li { margin: 6px 0; }
+  kbd { font: 600 .85em system-ui, sans-serif; background: var(--ok); color: #fff; padding: 1px 8px; border-radius: 6px; }
+  .status { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border-radius: 10px; background: var(--soft-info); }
+  .status.ok { background: var(--soft-ok); } .status.warn { background: var(--soft-warn); } .status.err { background: var(--soft-err); }
+  .status .icon { font-size: 1.4rem; line-height: 1.2; width: 1.6rem; text-align: center; flex: none; }
+  .status strong { display: block; }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--fg); cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  .feed { display: flex; gap: 8px; align-items: center; }
+  .feed code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .85rem; padding: 8px 10px;
+               background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+  ul.list { list-style: none; margin: 0; padding: 0; }
+  ul.list li { padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.list li:first-child { border-top: 0; }
+  ul.list .t { font-weight: 600; text-decoration: none; }
+  ul.list .t:hover { text-decoration: underline; }
+  .new { font-size: .75rem; font-weight: 700; color: var(--ok); margin-left: 6px; }
+  .waiting { margin: 10px 0 0; padding-left: 1.2rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Add PDFs</h1>
+      <div class="muted">They become articles in your feed in about 2 minutes.</div>
+    </div>
+    <a href="../">All articles →</a>
+  </header>
+
+  <section class="card" aria-labelledby="up-h">
+    <h2 id="up-h">1 · Upload</h2>
+    <a class="big" id="upload" href="https://github.com/szucsgabor24/pdfprocess/upload/main/inbox" target="_blank" rel="noopener">
+      <span aria-hidden="true">⬆</span> Upload PDFs on GitHub
+    </a>
+    <ol class="steps">
+      <li>A GitHub tab opens, already in the <code>inbox</code> folder (sign in if asked).</li>
+      <li>Drag your PDFs onto it, or click <em>choose your files</em>.</li>
+      <li>Wait for the files to finish loading, then press <kbd>Commit changes</kbd>.</li>
+      <li>Come back to this tab. Progress shows below.</li>
+    </ol>
+  </section>
+
+  <section class="card" aria-labelledby="st-h">
+    <h2 id="st-h">2 · Progress</h2>
+    <div id="status" class="status" role="status" aria-live="polite">
+      <span class="icon" aria-hidden="true">…</span><div><strong>Checking…</strong></div>
+    </div>
+    <div class="row">
+      <span class="muted" id="checked"></span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="ar-h">
+    <h2 id="ar-h">Recent articles</h2>
+    <ul class="list" id="articles"><li class="muted">Loading…</li></ul>
+  </section>
+
+  <section class="card" aria-labelledby="fd-h">
+    <h2 id="fd-h">Feed for Inoreader</h2>
+    <div class="feed">
+      <code id="feedurl">https://szucsgabor24.github.io/pdfprocess/feed.xml</code>
+      <button type="button" id="copy">Copy</button>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const REPO = "szucsgabor24/pdfprocess", BRANCH = "main";
+  const API = `https://api.github.com/repos/${REPO}`;
+  const RUNS = `https://github.com/${REPO}/actions/workflows/build.yml`;
+  const $ = (id) => document.getElementById(id);
+
+  let knownSlugs = null;       // slugs present when the page was opened
+  let watchUntil = 0;          // poll while now < watchUntil
+  let timer = null;
+  let rateLimitedUntil = 0;
+  let sawActivity = false;     // an upload/run was seen since the page opened
+
+  const ago = (iso) => {
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+    return new Date(iso).toLocaleDateString();
+  };
+
+  async function getJSON(url, github) {
+    const r = await fetch(url, github ? { headers: { Accept: "application/vnd.github+json" } } : { cache: "no-store" });
+    if (github && (r.status === 403 || r.status === 429)) {
+      const reset = Number(r.headers.get("x-ratelimit-reset")) * 1000;
+      rateLimitedUntil = reset || Date.now() + 15 * 60 * 1000;
+      throw new Error("ratelimit");
+    }
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  function setStatus(kind, icon, title, detail, spin) {
+    const el = $("status");
+    el.className = `status ${kind}`;
+    el.innerHTML = "";
+    const i = document.createElement("span");
+    i.className = "icon" + (spin ? " spin" : "");
+    i.setAttribute("aria-hidden", "true");
+    i.textContent = icon;
+    const body = document.createElement("div");
+    const t = document.createElement("strong");
+    t.textContent = title;
+    body.append(t);
+    if (detail) body.append(detail);
+    el.append(i, body);
+  }
+
+  function frag(...parts) {
+    const span = document.createElement("span");
+    for (const p of parts) span.append(p);
+    return span;
+  }
+  function link(text, href) {
+    const a = document.createElement("a");
+    a.href = href; a.textContent = text; a.target = "_blank"; a.rel = "noopener";
+    return a;
+  }
+
+  function renderArticles(list) {
+    const ul = $("articles");
+    ul.innerHTML = "";
+    if (!list.length) { ul.innerHTML = '<li class="muted">No articles yet.</li>'; return; }
+    for (const a of list.slice(0, 10)) {
+      const li = document.createElement("li");
+      const t = document.createElement("a");
+      t.className = "t"; t.href = `../articles/${a.slug}/`; t.textContent = a.title;
+      li.append(t);
+      if (knownSlugs && !knownSlugs.has(a.slug)) {
+        const n = document.createElement("span"); n.className = "new"; n.textContent = "NEW"; li.append(n);
+      }
+      const m = document.createElement("div");
+      m.className = "muted";
+      m.textContent = [a.author, ago(a.date)].filter(Boolean).join(" · ");
+      li.append(m);
+      ul.append(li);
+    }
+  }
+
+  async function refresh() {
+    clearTimeout(timer);
+    let articles = [];
+    try {
+      articles = (await getJSON(`../articles.json?t=${Date.now()}`)) || [];
+      if (!knownSlugs) knownSlugs = new Set(articles.map((a) => a.slug));
+      renderArticles(articles);
+    } catch { /* list is optional */ }
+    const fresh = knownSlugs ? articles.filter((a) => !knownSlugs.has(a.slug)) : [];
+
+    if (Date.now() < rateLimitedUntil) {
+      setStatus("warn", "⏸", "Live status paused",
+        frag(`GitHub limits status checks. They resume at ${new Date(rateLimitedUntil).toLocaleTimeString()}. `,
+             "Uploads still work; ", link("see progress on GitHub", RUNS), "."));
+      return schedule();
+    }
+
+    try {
+      const runs = await getJSON(`${API}/actions/workflows/build.yml/runs?per_page=1&branch=${encodeURIComponent(BRANCH)}`, true);
+      const run = runs && runs.workflow_runs && runs.workflow_runs[0];
+      const active = run && run.status !== "completed";
+      let waiting = [];
+      if (!active) {  // a second request only when it can change what we show
+        const inbox = await getJSON(`${API}/contents/inbox?ref=${encodeURIComponent(BRANCH)}`, true);
+        waiting = (inbox || []).filter((f) => /\.pdf$/i.test(f.name)).map((f) => f.name);
+      }
+      if (active || waiting.length) sawActivity = true;
+
+      if (active) {
+        watchUntil = Math.max(watchUntil, Date.now() + 60 * 1000);
+        setStatus("", "◐", run.status === "queued" ? "Queued, starting soon…" : "Processing…",
+          frag(`Started ${ago(run.run_started_at || run.created_at)}. Usually takes 1–3 minutes. `,
+               link("Details", run.html_url)), true);
+      } else if (waiting.length) {
+        watchUntil = Math.max(watchUntil, Date.now() + 60 * 1000);
+        const failed = run && run.conclusion && run.conclusion !== "success";
+        setStatus(failed ? "err" : "warn", failed ? "✗" : "…",
+          failed ? "Last run failed; these PDFs are still waiting" : "Uploaded, waiting for processing to start…",
+          frag(waiting.join(", "), ". ", link(failed ? "See what went wrong" : "Details", run ? run.html_url : RUNS)));
+      } else if (fresh.length) {
+        const a = fresh[0];
+        setStatus("ok", "✓", fresh.length > 1 ? `${fresh.length} new articles published` : "Published",
+          frag(link(a.title, `../articles/${a.slug}/`),
+               " is live. Inoreader shows it on its next check."));
+        watchUntil = 0;
+      } else if (sawActivity && run && run.conclusion === "success") {
+        watchUntil = Math.max(watchUntil, Date.now() + 30 * 1000);
+        setStatus("", "◐", "Finishing… updating the website", frag("This can take up to a minute."), true);
+      } else if (run && run.conclusion === "failure") {
+        setStatus("err", "✗", "The last run failed", frag(`${ago(run.updated_at)}. `, link("See what went wrong", run.html_url)));
+      } else {
+        setStatus("", "✓", "Ready for new PDFs",
+          run ? frag(`Last update ${ago(run.updated_at)}.`) : frag("Nothing processed yet."));
+      }
+    } catch (e) {
+      if (e.message === "ratelimit") return refresh();
+      setStatus("warn", "?", "Couldn't reach GitHub", frag("Check your connection, then press Refresh."));
+    }
+    $("checked").textContent = `Checked ${new Date().toLocaleTimeString()}`;
+    schedule();
+  }
+
+  // Poll only while something is expected to change (GitHub allows ~60 checks/hour).
+  function schedule() {
+    clearTimeout(timer);
+    if (document.visibilityState === "visible" && Date.now() < watchUntil) timer = setTimeout(refresh, 30000);
+  }
+  const watch = (ms) => { watchUntil = Math.max(watchUntil, Date.now() + ms); };
+
+  $("upload").addEventListener("click", () => watch(5 * 60 * 1000));
+  $("refresh").addEventListener("click", () => { watch(3 * 60 * 1000); refresh(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && Date.now() < watchUntil) refresh();
+  });
+  $("copy").addEventListener("click", async () => {
+    const b = $("copy");
+    try { await navigator.clipboard.writeText($("feedurl").textContent); b.textContent = "Copied"; }
+    catch { b.textContent = "Select & copy"; }
+    setTimeout(() => (b.textContent = "Copy"), 2000);
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>
