@@ -43,9 +43,10 @@ the next run (or run **Actions → Build feed → Run workflow** manually).
 - **Text:** headings and paragraphs rebuilt from PyMuPDF text blocks (larger font →
   heading); page numbers and repeated headers/footers dropped; simple two-column
   reading order.
-- **Figures:** embedded raster images ≥ 100×100 px are saved as `img-N.png`, placed in
-  reading order; each image appears once (repeated logos are not duplicated).
-  Vector-drawn charts are not extracted — they remain in the original PDF.
+- **Figures:** embedded images (≥ 100×100 px) and charts drawn as vector graphics are
+  rendered from the page as `img-N.png` (200 dpi, exactly as they look in the PDF),
+  with their axis labels and legends; captions ("Figure 1 …", "Source: …") stay as
+  text. Figures are placed in reading order; repeated images (logos) appear once.
 - **OCR:** if a page has images but no text, `ocrmypdf -l hun+eng --skip-text` runs and
   the article notes "OCR applied". Headings are not detected on OCR pages.
 - `original.pdf` is copied next to the article and linked at its end.

@@ -238,24 +238,95 @@ def reading_order(items: list[dict], page_width: float) -> list[dict]:
     return out
 
 
-def save_image(doc: fitz.Document, xref: int, dest: Path) -> bool:
-    try:
-        pix = fitz.Pixmap(doc, xref)
-        smask = doc.xref_get_key(xref, "SMask")
-        if smask[0] == "xref":
-            try:
-                pix = fitz.Pixmap(pix, fitz.Pixmap(doc, int(smask[1].split()[0])))
-            except Exception:
-                pass
-        if pix.colorspace and pix.colorspace.n not in (1, 3):
-            pix = fitz.Pixmap(fitz.csRGB, pix)
-        elif pix.colorspace is None and not pix.alpha:  # stencil mask etc.
-            return False
-        pix.save(dest)
-        return True
-    except Exception as e:  # noqa: BLE001
-        print(f"    image xref {xref} skipped: {e}")
-        return False
+CAPTION = re.compile(r"^(fig(ure)?|table|chart|exhibit|source|sources|note|notes|"
+                     r"ábra|táblázat|forrás|megjegyzés)\b", re.I)
+FIG_DPI = 200
+
+
+def _merge(rects: list) -> list:
+    rects = [fitz.Rect(r) for r in rects]
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(rects)):
+            for j in range(i + 1, len(rects)):
+                if rects[i].intersects(rects[j]):
+                    rects[i] |= rects.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+    return rects
+
+
+def _inside(bbox, region: fitz.Rect, share: float = 0.5) -> bool:
+    r = fitz.Rect(bbox)
+    return not r.is_empty and (r & region).get_area() >= share * r.get_area()
+
+
+def figure_regions(page: fitz.Page, texts: list[dict], is_ocr: bool) -> list[fitz.Rect]:
+    """Page areas to render as figures: raster images >= MIN_IMG_PX and clusters
+    of vector drawings (charts), grown to include their short labels but not
+    their captions ("Figure 1 ...", "Source: ...")."""
+    pr, area = page.rect, page.rect.get_area()
+    rects = []
+    for img in page.get_images(full=True):
+        if img[2] < MIN_IMG_PX or img[3] < MIN_IMG_PX:
+            continue
+        for r in page.get_image_rects(img[0]):
+            r &= pr
+            if r.is_empty or r.width < 20 or r.height < 20:
+                continue
+            if is_ocr and r.get_area() > 0.6 * area:  # the scan itself, not a figure
+                continue
+            rects.append(r)
+    if not is_ocr:
+        try:
+            clusters = page.cluster_drawings()
+        except Exception:  # noqa: BLE001
+            clusters = []
+        for r in clusters:
+            r &= pr
+            if r.width >= 100 and r.height >= 60 and r.get_area() < 0.85 * area:
+                rects.append(r)
+    regions = _merge(rects)
+
+    out = []
+    for reg in regions:
+        # grow by nearby labels (axis ticks, legends, panel titles)
+        grown = True
+        while grown:
+            grown = False
+            for t in texts:
+                tb = fitz.Rect(t["bbox"])
+                if (len(t["text"]) <= 80 and not CAPTION.match(t["text"])
+                        and tb.intersects(reg + (-10, -10, 10, 10)) and not reg.contains(tb)):
+                    reg |= tb
+                    grown = True
+        # keep captions out of the picture
+        for t in texts:
+            tb = fitz.Rect(t["bbox"])
+            if CAPTION.match(t["text"]) and _inside(tb, reg):
+                if tb.y0 + tb.y1 > reg.y0 + reg.y1:
+                    reg.y1 = min(reg.y1, tb.y0 - 4)  # 4 > render padding
+                else:
+                    reg.y0 = max(reg.y0, tb.y1 + 4)
+        if reg.height < 30 or reg.width < 30:
+            continue
+        # a box that holds running prose is a text box/table, not a figure
+        if any(len(t["text"]) > 200 and _inside(t["bbox"], reg) for t in texts):
+            continue
+        out.append(reg)
+    return _merge(out)
+
+
+def render_region(page: fitz.Page, rect: fitz.Rect, dest: Path) -> bytes | None:
+    pix = page.get_pixmap(clip=(rect + (-3, -3, 3, 3)) & page.rect, dpi=FIG_DPI, alpha=False)
+    if pix.width < MIN_IMG_PX or pix.height < MIN_IMG_PX:
+        return None
+    data = pix.tobytes("png")
+    dest.write_bytes(data)
+    return data
 
 
 def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
@@ -273,57 +344,55 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
             t = block_text(b)
             if not t:
                 continue
-            if pno not in ocr_pages:
-                for l in b["lines"]:
-                    for s in l["spans"]:
-                        size_counter[round(s["size"], 1)] += len(s["text"].strip())
             edge = b["bbox"][1] < 0.08 * h or b["bbox"][3] > 0.92 * h
             if edge:
                 edge_counter[norm_repeat(t)] += 1
             ocr = pno in ocr_pages  # OCR text has no reliable size/weight
             texts.append({"type": "text", "bbox": b["bbox"], "text": t,
                           "size": 0.0 if ocr else block_size(b),
-                          "bold": False if ocr else block_bold(b), "edge": edge})
-        pages.append((page, texts))
+                          "bold": False if ocr else block_bold(b), "edge": edge,
+                          "spans": [(round(s["size"], 1), len(s["text"].strip()))
+                                    for l in b["lines"] for s in l["spans"]]})
+        figs = figure_regions(page, texts, pno in ocr_pages)
+        texts = [t for t in texts if not any(_inside(t["bbox"], f) for f in figs)]
+        if pno not in ocr_pages:
+            for t in texts:
+                for size, n in t["spans"]:
+                    size_counter[size] += n
+        pages.append((page, texts, figs))
 
     body = size_counter.most_common(1)[0][0] if size_counter else 10.0
     n_pages = len(doc)
     repeated = {k for k, v in edge_counter.items()
                 if n_pages >= 3 and v >= max(3, n_pages // 2)}
 
-    heading_sizes = sorted({round(t["size"]) for _, ts in pages for t in ts
+    heading_sizes = sorted({round(t["size"]) for _, ts, _ in pages for t in ts
                             if t["size"] >= body * 1.15 and len(t["text"]) < 200},
                            reverse=True)
     level = {s: f"h{min(2 + i, 4)}" for i, s in enumerate(heading_sizes)}
 
     elements: list[dict] = []
-    seen_xrefs: set[int] = set()
+    seen_imgs: set[str] = set()
     img_n = 0
     dropcap = ""
-    for pno, (page, texts) in enumerate(pages):
+    for pno, (page, texts, figs) in enumerate(pages):
         items = [t for t in texts
                  if not (t["edge"] and (norm_repeat(t["text"]) in repeated
                                         or re.fullmatch(r"[\d\s/.\-–|]+|page \d+.*", t["text"], re.I)))]
-        page_area = page.rect.width * page.rect.height
-        for img in page.get_images(full=True):
-            xref, w, hgt = img[0], img[2], img[3]
-            if xref in seen_xrefs or w < MIN_IMG_PX or hgt < MIN_IMG_PX:
-                continue
-            rects = page.get_image_rects(xref)
-            rect = rects[0] if rects else fitz.Rect(0, page.rect.height, page.rect.width, page.rect.height)
-            if rect.width < 2 and rect.height < 2:
-                continue
-            # On OCRed pages the full-page scan is the text itself, not a figure.
-            if pno in ocr_pages and rect.get_area() > 0.6 * page_area:
-                continue
-            seen_xrefs.add(xref)
-            items.append({"type": "img", "bbox": tuple(rect), "xref": xref})
+        items += [{"type": "img", "bbox": tuple(f)} for f in figs]
         for it in reading_order(items, page.rect.width):
             if it["type"] == "img":
                 name = f"img-{img_n + 1}.png"
-                if save_image(doc, it["xref"], outdir / name):
-                    img_n += 1
-                    elements.append({"kind": "img", "src": name})
+                data = render_region(page, fitz.Rect(it["bbox"]), outdir / name)
+                if data is None:
+                    continue
+                digest = hashlib.md5(data).hexdigest()
+                if digest in seen_imgs:  # same logo/figure repeated on many pages
+                    (outdir / name).unlink()
+                    continue
+                seen_imgs.add(digest)
+                img_n += 1
+                elements.append({"kind": "img", "src": name})
                 continue
             t = it["text"]
             if dropcap:
