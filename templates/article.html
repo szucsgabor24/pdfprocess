@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<link rel="alternate" type="application/atom+xml" title="{{ site_title }}" href="../../feed.xml">
+{% include "_style.html" %}
+</head>
+<body>
+<nav><a href="../../">{{ site_title }}</a></nav>
+<article>
+<h1>{{ title }}</h1>
+<p class="meta"><time datetime="{{ date }}">{{ date[:10] }}</time></p>
+{{ body | safe }}
+</article>
+</body>
+</html>
