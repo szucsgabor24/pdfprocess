@@ -37,6 +37,9 @@ the next run (or run **Actions → Build feed → Run workflow** manually).
 - Processes only PDFs whose SHA-256 is not yet in `data/articles.json`; reruns and
   re-uploads of the same file never create duplicates.
 - **Title:** PDF metadata title → largest-font text on page 1 → file name.
+- **Author:** the name line near the title on page 1 (e.g. `NIALL FERGUSON` →
+  "Niall Ferguson"), else the PDF metadata author (often the typesetter, so it is
+  only a fallback), else none. Shown in the feed entry and on the article page.
 - **Date:** git commit date of the uploaded PDF.
 - **Slug:** ASCII from the title (`Őszi jelentés` → `oszi-jelentes`); a short hash is
   appended on collision.
@@ -58,7 +61,7 @@ the next run (or run **Actions → Build feed → Run workflow** manually).
 ```
 inbox/               upload here
 processed/           PDFs after processing
-data/articles.json   metadata (slug, title, date, source, sha256, ocr)
+data/articles.json   metadata (slug, title, author, date, source, sha256, ocr)
 data/content/        article HTML fragments used to (re)build the feed
 site/                published site (committed so later runs only add to it)
 templates/           Jinja2 templates for article and index pages

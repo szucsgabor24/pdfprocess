@@ -11,7 +11,7 @@
 <nav><a href="../../">{{ site_title }}</a></nav>
 <article>
 <h1>{{ title }}</h1>
-<p class="meta"><time datetime="{{ date }}">{{ date[:10] }}</time></p>
+<p class="meta">{% if author %}{{ author }} · {% endif %}<time datetime="{{ date }}">{{ date[:10] }}</time></p>
 {{ body | safe }}
 </article>
 </body>

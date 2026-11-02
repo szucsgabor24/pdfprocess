@@ -214,6 +214,65 @@ def detect_title(doc: fitz.Document, fallback: str, ocr_first_page: bool = False
     return fallback
 
 
+_NOT_NAME = re.compile(
+    r"\b(universit\w*|institut\w*|college|school|department|dept|faculty|centre|center|bank|"
+    r"press|journal|review|paper|papers|report|volume|vol|series|working|abstract|summary|"
+    r"introduction|chapter|copyright|egyetem\w*|intézet\w*|tanszék\w*|kar|kiadó|"
+    r"összefoglaló|bevezetés|fejezet|the|of|for|in|on|to|with|from|"
+    r"microsoft|office|user|admin\w*|owner|windows|adobe|acrobat|unknown|anonymous|"
+    r"kingdom|states|republic|reserve|federal|national|union|ministry|government|agency|"
+    r"association|society|foundation|committee|council|group|company|corporation|inc|ltd|"
+    r"llc|zrt|kft|nyrt|minisztérium|hivatal)\b", re.I)
+_MARKS = re.compile(r"[*†‡§¹²³⁴⁵⁶⁷⁸⁹⁰\d]+(?=,|\s|$)")  # footnote marks after names
+_NAME_WORD = r"(?:[A-ZÀ-ÖØ-Ý][\w'’\-]*\.?|[A-ZÀ-ÖØ-Ý]\.)"
+_CONNECT = r"(?:,\s*(?:and\s+|&\s+|és\s+)?|\s+(?:and|&|és)\s+)"
+_ONE_NAME = rf"{_NAME_WORD}(?:\s+(?:(?:van|von|de|der|den|da|di|du|la|le|ten|ter)\s+)*{_NAME_WORD}){{1,4}}"
+_NAMES = re.compile(rf"^(?:by\s+)?{_ONE_NAME}(?:{_CONNECT}{_ONE_NAME}){{0,7}}$")
+
+
+def _name_case(t: str) -> str:
+    """NIALL FERGUSON -> Niall Ferguson; mixed case is left alone."""
+    if t.upper() != t:
+        return t
+    return re.sub(r"[^\W\d_]+", lambda m: m.group(0).capitalize(), t)
+
+
+def looks_like_names(t: str) -> bool:
+    t = _MARKS.sub("", t).strip()
+    if t.upper() != t and re.search(r"\b[A-Z]{2,}\b", t):  # acronym in mixed case: GDP, IMF
+        return False
+    return (3 <= len(t) <= 120 and not _NOT_NAME.search(t) and "@" not in t
+            and not re.search(r"\d", t) and bool(_NAMES.match(_name_case(t))))
+
+
+def detect_author(doc: fitz.Document, title: str, ocr_first_page: bool = False) -> str:
+    """A name line on page 1 near the title, else the PDF metadata author, else ''.
+    The byline wins because metadata often names the typesetter or uploader."""
+    byline = "" if ocr_first_page or not len(doc) else _byline(doc[0], title)
+    if byline:
+        return byline
+    meta = clean((doc.metadata or {}).get("author", "") or "").strip()
+    meta = re.sub(r"\s*;\s*", ", ", meta)
+    if looks_like_names(meta):
+        return _name_case(_MARKS.sub("", meta).strip())
+    return ""
+
+
+def _byline(page: fitz.Page, title: str) -> str:
+    norm = lambda t: re.sub(r"\W+", " ", t).strip().lower()
+    for b in sorted((b for b in page.get_text("dict")["blocks"] if b["type"] == 0),
+                    key=lambda b: b["bbox"][1]):
+        if b["bbox"][1] > 0.5 * page.rect.height:
+            break
+        for line in b["lines"]:
+            t = re.sub(r"\s+", " ", clean("".join(s["text"] for s in line["spans"]))).strip()
+            if t and norm(t) not in norm(title) and looks_like_names(t):
+                t = re.sub(r"^by\s+", "", t, flags=re.I)
+                t = _MARKS.sub("", t).strip()
+                return _name_case(t)
+    return ""
+
+
 def reading_order(items: list[dict], page_width: float) -> list[dict]:
     """Order items: full-width items split the page into bands; inside a band,
     left column top-to-bottom then right column top-to-bottom."""
@@ -462,7 +521,8 @@ def absolutize(fragment: str, base: str) -> str:
 
 def write_article_page(a: dict, body: str) -> None:
     page = env.get_template("article.html").render(
-        title=a["title"], date=a["date"], body=body, site_title=SITE_TITLE)
+        title=a["title"], author=a.get("author", ""), date=a["date"], body=body,
+        site_title=SITE_TITLE)
     (SITE / "articles" / a["slug"] / "index.html").write_text(page, encoding="utf-8")
 
 
@@ -491,6 +551,8 @@ def write_feed(articles: list[dict], base: str) -> None:
         fe = fg.add_entry(order="append")
         fe.id(url)
         fe.title(a["title"])
+        if a.get("author"):
+            fe.author({"name": a["author"]})
         pdf = SITE / "articles" / a["slug"] / "original.pdf"
         links = [{"href": url, "rel": "alternate", "type": "text/html"},
                  {"href": f"{url}original.pdf", "rel": "enclosure", "type": "application/pdf",
@@ -541,6 +603,7 @@ def process(pdf: Path, articles: list[dict]) -> dict:
         src, ocr_pages = ocr_if_needed(pdf, Path(tmp))
         with fitz.open(src) as doc:
             title = detect_title(doc, pdf.stem.replace("_", " ").strip(), 0 in ocr_pages)
+            author = detect_author(doc, title, 0 in ocr_pages)
         slug = unique_slug(title, digest, {a["slug"] for a in articles})
         outdir = SITE / "articles" / slug
         outdir.mkdir(parents=True, exist_ok=True)
@@ -553,11 +616,24 @@ def process(pdf: Path, articles: list[dict]) -> dict:
     body = render_body(elements, title, bool(ocr_pages))
     CONTENT.mkdir(parents=True, exist_ok=True)
     (CONTENT / f"{slug}.html").write_text(body, encoding="utf-8")
-    article = {"slug": slug, "title": title, "date": date.isoformat(),
+    article = {"slug": slug, "title": title, "author": author, "date": date.isoformat(),
                "source": pdf.name, "sha256": digest, "ocr": bool(ocr_pages)}
     write_article_page(article, body)
     article["source"] = move_to_processed(pdf, digest)
     return article
+
+
+def backfill_authors(articles: list[dict]) -> None:
+    """Articles built before author detection existed have no 'author' key."""
+    for a in articles:
+        if "author" in a:
+            continue
+        pdf = PROCESSED / a["source"]
+        a["author"] = ""
+        if pdf.exists():
+            with fitz.open(pdf) as doc:
+                a["author"] = detect_author(doc, a["title"], a.get("ocr", False))
+            print(f"author for {a['slug']}: {a['author'] or '(none found)'}")
 
 
 def main() -> int:
@@ -584,8 +660,13 @@ def main() -> int:
         save_articles(articles)
         print(f"  -> articles/{a['slug']}/  ({a['title']})")
 
+    backfill_authors(articles)
     save_articles(articles)
     SITE.mkdir(exist_ok=True)
+    for a in articles:  # re-render pages so template/metadata changes apply to all
+        frag = CONTENT / f"{a['slug']}.html"
+        if frag.exists() and (SITE / "articles" / a["slug"]).is_dir():
+            write_article_page(a, frag.read_text(encoding="utf-8"))
     write_index(articles)
     write_feed(articles, base)
     print(f"feed: {base}/feed.xml ({min(len(articles), FEED_LIMIT)} entries)")
