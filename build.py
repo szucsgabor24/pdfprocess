@@ -135,21 +135,44 @@ def ocr_if_needed(src: Path, workdir: Path) -> tuple[Path, set[int]]:
 
 # --------------------------------------------------------------------------- extraction
 
+_LIGATURES = str.maketrans({"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi",
+                            "\ufb04": "ffl", "\ufb05": "st", "\ufb06": "st"})
+
+
+def clean(t: str) -> str:
+    return t.translate(_LIGATURES)
+
+
+PARA_BREAK = "\x00"
+GLUE = "\x01"  # trailing drop cap: join the next block without a space
+
+
 def block_text(block: dict) -> str:
+    """Block text; PARA_BREAK marks a paragraph start inside the block (drop cap)."""
     lines = []
     for line in block["lines"]:
         t = "".join(s["text"] for s in line["spans"]).strip()
         if t:
-            lines.append(t)
-    out = ""
-    for t in lines:
-        if not out:
+            size = max(s["size"] for s in line["spans"] if s["text"].strip())
+            lines.append((t, size))
+    out, dropcap = "", ""
+    for i, (t, size) in enumerate(lines):
+        nxt = lines[i + 1][1] if i + 1 < len(lines) else (lines[i - 1][1] if i else 0)
+        if re.fullmatch(r"[A-ZÀ-Ý]", t) and nxt and size > 2 * nxt:
+            dropcap = t   # glue to the next line, which starts a new paragraph
+            continue
+        if dropcap:
+            out += (PARA_BREAK if out else "") + dropcap + t
+            dropcap = ""
+        elif not out:
             out = t
         elif re.search(r"\w-$", out) and t[:1].islower():   # de-hyphenate
             out = out[:-1] + t
         else:
             out += " " + t
-    return re.sub(r"\s+", " ", out).strip()
+    if dropcap:  # drop cap is the block's last line: it starts the next block's text
+        out += (PARA_BREAK if out else "") + dropcap + GLUE
+    return PARA_BREAK.join(re.sub(r"\s+", " ", clean(p)).strip() for p in out.split(PARA_BREAK))
 
 
 def block_size(block: dict) -> float:
@@ -169,26 +192,25 @@ def norm_repeat(t: str) -> str:
 def detect_title(doc: fitz.Document, fallback: str, ocr_first_page: bool = False) -> str:
     meta = (doc.metadata or {}).get("title", "") or ""
     meta = meta.strip()
-    junk = re.compile(r"^(untitled|microsoft (word|powerpoint)|document\d*$|.*\.(docx?|pptx?|pdf|tex|indd)$)", re.I)
-    if len(meta) >= 3 and not junk.match(meta):
+    meta = clean(meta)
+    junk = re.compile(r"^(untitled|microsoft (word|powerpoint)|document\d*$|.*\.[a-z0-9]{1,5}$)", re.I)
+    filename_like = " " not in meta and ("_" in meta or re.search(r"\d{3,}", meta))
+    if len(meta) >= 3 and not junk.match(meta) and not filename_like:
         return meta
     if len(doc) and not ocr_first_page:  # OCR font sizes are not meaningful
         blocks = [b for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0]
-        best_size, parts = 0.0, []
+        by_size: dict[float, list[str]] = {}
         for b in blocks:
             for l in b["lines"]:
                 for s in l["spans"]:
                     t = s["text"].strip()
-                    if not t:
-                        continue
-                    size = round(s["size"], 1)
-                    if size > best_size + 0.05:
-                        best_size, parts = size, [t]
-                    elif abs(size - best_size) <= 0.05:
-                        parts.append(t)
-        title = re.sub(r"\s+", " ", " ".join(parts)).strip()
-        if len(title) >= 3 and re.search(r"\w", title):
-            return title[:200]
+                    if t:
+                        by_size.setdefault(round(s["size"]), []).append(t)
+        # Largest font whose text looks like a title (skips drop caps, symbols).
+        for size in sorted(by_size, reverse=True):
+            title = re.sub(r"\s+", " ", clean(" ".join(by_size[size]))).strip()
+            if len(title) >= 8 and len(re.findall(r"\w", title)) >= 5:
+                return title[:200]
     return fallback
 
 
@@ -277,6 +299,7 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
     elements: list[dict] = []
     seen_xrefs: set[int] = set()
     img_n = 0
+    dropcap = ""
     for pno, (page, texts) in enumerate(pages):
         items = [t for t in texts
                  if not (t["edge"] and (norm_repeat(t["text"]) in repeated
@@ -303,11 +326,18 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
                     elements.append({"kind": "img", "src": name})
                 continue
             t = it["text"]
+            if dropcap:
+                t, dropcap = dropcap + t, ""
+            elif re.fullmatch(r"[A-ZÀ-Ý]", t) and it["size"] > 2 * body:
+                dropcap = t
+                continue
             r = round(it["size"])
             if r in level and len(t) < 200:
                 elements.append({"kind": level[r], "text": t})
             elif it["bold"] and len(t) < 120 and not t.endswith((".", ",", ";")):
                 elements.append({"kind": "h4", "text": t})
+            elif elements and elements[-1]["kind"] == "p" and elements[-1]["text"].endswith(GLUE):
+                elements[-1]["text"] = elements[-1]["text"][:-1] + t
             elif elements and elements[-1]["kind"] == "p" and _continues(elements[-1]["text"], t):
                 # paragraph split across a column / page break
                 prev = elements[-1]["text"]
@@ -334,13 +364,24 @@ def render_body(elements: list[dict], title: str, ocr: bool) -> str:
     if ocr:
         out.append('<p><em>OCR applied: some pages were scanned images; their text '
                    'was recognised automatically and may contain errors.</em></p>')
-    for i, el in enumerate(elements):
+    merged: list[dict] = []
+    for el in elements:
+        prev = merged[-1] if merged else None
+        if (prev and el["kind"] != "img" and el["kind"].startswith("h") and prev["kind"] == el["kind"]
+                and (el["text"][:1].islower() or not re.search(r"[.!?:]$", prev["text"]))):
+            prev["text"] = f'{prev["text"]} {el["text"]}'
+        else:
+            merged.append(dict(el))
+    norm = lambda t: re.sub(r"\W+", " ", t).strip().lower()
+    title_done = False
+    for el in merged:
         if el["kind"] == "img":
             out.append(f'<figure><img src="{el["src"]}" alt="" loading="lazy"></figure>')
-        elif i == 0 and el["kind"].startswith("h") and el["text"].strip().lower() == title.strip().lower():
-            continue  # don't repeat the title
+        elif not title_done and el["kind"].startswith("h") and norm(el["text"]) == norm(title):
+            title_done = True  # don't repeat the title
         else:
-            out.append(f'<{el["kind"]}>{html.escape(el["text"])}</{el["kind"]}>')
+            for part in el["text"].replace(GLUE, "").split(PARA_BREAK):
+                out.append(f'<{el["kind"]}>{html.escape(part)}</{el["kind"]}>')
     out.append('<hr><p><a href="original.pdf">Original PDF</a></p>')
     return "\n".join(out) + "\n"
 
