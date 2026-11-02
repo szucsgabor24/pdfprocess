@@ -526,9 +526,33 @@ def write_article_page(a: dict, body: str) -> None:
     (SITE / "articles" / a["slug"] / "index.html").write_text(page, encoding="utf-8")
 
 
-def write_index(articles: list[dict]) -> None:
+def repo_and_branch() -> tuple[str, str]:
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    branch = os.environ.get("GITHUB_REF_NAME", "")
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return ""
+    if not repo:
+        m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", git("remote", "get-url", "origin"))
+        repo = m.group(1) if m else ""
+    return repo, branch or git("rev-parse", "--abbrev-ref", "HEAD") or "main"
+
+
+def write_index(articles: list[dict], base: str) -> None:
     page = env.get_template("index.html").render(articles=articles, site_title=SITE_TITLE)
     (SITE / "index.html").write_text(page, encoding="utf-8")
+    # public list used by the upload page to show progress (same origin, no rate limit)
+    public = [{k: a.get(k, "") for k in ("slug", "title", "author", "date")} for a in articles]
+    (SITE / "articles.json").write_text(json.dumps(public, ensure_ascii=False), encoding="utf-8")
+    repo, branch = repo_and_branch()
+    if repo:
+        (SITE / "upload").mkdir(exist_ok=True)
+        page = env.get_template("upload.html").render(
+            repo=repo, branch=branch, feed_url=f"{base}/feed.xml", site_title=SITE_TITLE)
+        (SITE / "upload" / "index.html").write_text(page, encoding="utf-8")
 
 
 def write_feed(articles: list[dict], base: str) -> None:
@@ -667,7 +691,7 @@ def main() -> int:
         frag = CONTENT / f"{a['slug']}.html"
         if frag.exists() and (SITE / "articles" / a["slug"]).is_dir():
             write_article_page(a, frag.read_text(encoding="utf-8"))
-    write_index(articles)
+    write_index(articles, base)
     write_feed(articles, base)
     print(f"feed: {base}/feed.xml ({min(len(articles), FEED_LIMIT)} entries)")
     return 1 if failures else 0

@@ -5,6 +5,8 @@ on:
     paths:
       - "inbox/**.pdf"
       - "inbox/**.PDF"
+      - "build.py"
+      - "templates/**"
   workflow_dispatch:   # manual rerun: Actions tab -> Build feed -> Run workflow
 
 permissions:

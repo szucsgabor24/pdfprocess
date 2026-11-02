@@ -23,11 +23,24 @@ set `FEED_TITLE` / `FEED_AUTHOR` as `env:` on the Build step in
 
 ## Routine: adding a PDF
 
-1. Open the repo on github.com → `inbox/` → **Add file → Upload files** → drop the
-   PDF(s) → **Commit changes** (to the default branch).
-2. The **Build feed** workflow runs (Actions tab, ~1–3 min; longer if OCR is needed).
-3. The PDF is moved to `processed/`, the article appears under
-   `/articles/<slug>/`, and Inoreader picks it up on its next poll.
+Open the upload page (bookmark it, works on a phone too):
+
+```
+https://szucsgabor24.github.io/pdfprocess/upload/
+```
+
+1. Press **Upload PDFs on GitHub**. GitHub's upload screen opens in the `inbox/`
+   folder (sign in if asked).
+2. Drag in the PDF(s) and press **Commit changes**.
+3. Come back to the upload page: it shows *Waiting → Processing → Published* and
+   links to the new article (~1–3 min; longer if OCR is needed). Inoreader picks it
+   up on its next poll.
+
+The page reads status from GitHub's public API without logging in (GitHub allows
+about 60 checks per hour per network), so it only checks while something is
+happening. If the limit is hit it says so; uploads are not affected.
+
+Without the page: on github.com open `inbox/` → **Add file → Upload files**.
 
 If a PDF fails, it stays in `inbox/`, the run shows a warning, and it is retried on
 the next run (or run **Actions → Build feed → Run workflow** manually).
@@ -63,7 +76,8 @@ inbox/               upload here
 processed/           PDFs after processing
 data/articles.json   metadata (slug, title, author, date, source, sha256, ocr)
 data/content/        article HTML fragments used to (re)build the feed
-site/                published site (committed so later runs only add to it)
+site/                published site (committed so later runs only add to it);
+                     site/upload/ is the upload page, site/articles.json its data
 templates/           Jinja2 templates for article and index pages
 build.py             the converter
 ```

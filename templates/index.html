@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>{{ site_title }}</h1>
-<p class="meta"><a href="feed.xml">Atom feed</a></p>
+<p class="meta"><a href="upload/">Add PDFs</a> · <a href="feed.xml">Atom feed</a></p>
 <ul>
 {% for a in articles %}  <li><a href="articles/{{ a.slug }}/">{{ a.title }}</a> <span class="meta">{% if a.author %}{{ a.author }} · {% endif %}{{ a.date[:10] }}</span></li>
 {% else %}  <li>No articles yet.</li>
