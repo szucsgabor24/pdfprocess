@@ -66,6 +66,17 @@ the next run (or run **Actions → Build feed → Run workflow** manually).
 - **OCR:** if a page has images but no text, `ocrmypdf -l hun+eng --skip-text` runs and
   the article notes "OCR applied". Headings are not detected on OCR pages.
 - `original.pdf` is copied next to the article and linked at its end.
+- **Long PDFs (more than 20 pages)** become one feed item per chapter, at
+  `/articles/<slug>/part-NN/`, each with its own figures, links to the previous and next
+  part, and the original PDF. `/articles/<slug>/` lists the parts.
+  - Split points: top-level PDF bookmarks (if there is a single root bookmark, its
+    children); else the largest font-size heading that occurs at least twice and at
+    most once per two pages (headings that frequent are sections, not chapters);
+    else chunks of ~10 pages. Text before the first chapter joins part 1.
+  - Titles: `<Title> — Part N/M: <chapter>` (chapter omitted when unknown or equal
+    to the title).
+  - All parts are published in one run, timestamps one minute apart, part 1 oldest.
+  - `data/articles.json` keeps one entry per PDF with its `parts` list.
 - **Feed:** `site/feed.xml`, Atom, newest 100, full HTML content with absolute URLs,
   plus an `enclosure` link to the PDF.
 
@@ -75,7 +86,8 @@ the next run (or run **Actions → Build feed → Run workflow** manually).
 inbox/               upload here
 processed/           PDFs after processing
 data/articles.json   metadata (slug, title, author, date, source, sha256, ocr)
-data/content/        article HTML fragments used to (re)build the feed
+data/content/        article HTML fragments used to (re)build pages and the feed
+                     (data/content/<slug>/part-NN.html for split PDFs)
 site/                published site (committed so later runs only add to it);
                      site/upload/ is the upload page, site/articles.json its data
 templates/           Jinja2 templates for article and index pages

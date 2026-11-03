@@ -17,6 +17,9 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+from datetime import timedelta
+from math import ceil
+from urllib.parse import urljoin
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +39,8 @@ SITE = ROOT / "site"
 TEMPLATES = ROOT / "templates"
 
 MIN_IMG_PX = 100
+SPLIT_MIN_PAGES = 21      # PDFs with more than 20 pages become several feed items
+CHUNK_PAGES = 10          # fallback part size when there are no chapters
 FEED_LIMIT = 100
 OCR_LANGS = "hun+eng"
 
@@ -403,7 +408,7 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
             t = block_text(b)
             if not t:
                 continue
-            edge = b["bbox"][1] < 0.08 * h or b["bbox"][3] > 0.92 * h
+            edge = (b["bbox"][1] < 0.08 * h or b["bbox"][3] > 0.92 * h) and len(t) <= 150
             if edge:
                 edge_counter[norm_repeat(t)] += 1
             ocr = pno in ocr_pages  # OCR text has no reliable size/weight
@@ -451,7 +456,7 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
                     continue
                 seen_imgs.add(digest)
                 img_n += 1
-                elements.append({"kind": "img", "src": name})
+                elements.append({"kind": "img", "src": name, "page": pno, "y": it["bbox"][1]})
                 continue
             t = it["text"]
             if dropcap:
@@ -460,10 +465,11 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
                 dropcap = t
                 continue
             r = round(it["size"])
+            pos = {"page": pno, "y": it["bbox"][1]}
             if r in level and len(t) < 200:
-                elements.append({"kind": level[r], "text": t})
+                elements.append({"kind": level[r], "text": t, "sized": True, **pos})
             elif it["bold"] and len(t) < 120 and not t.endswith((".", ",", ";")):
-                elements.append({"kind": "h4", "text": t})
+                elements.append({"kind": "h4", "text": t, **pos})
             elif elements and elements[-1]["kind"] == "p" and elements[-1]["text"].endswith(GLUE):
                 elements[-1]["text"] = elements[-1]["text"][:-1] + t
             elif elements and elements[-1]["kind"] == "p" and _continues(elements[-1]["text"], t):
@@ -471,9 +477,92 @@ def extract(pdf: Path, outdir: Path, ocr_pages: set[int]) -> list[dict]:
                 prev = elements[-1]["text"]
                 elements[-1]["text"] = (prev[:-1] + t) if prev.endswith("-") else f"{prev} {t}"
             else:
-                elements.append({"kind": "p", "text": t})
+                elements.append({"kind": "p", "text": t, **pos})
     doc.close()
     return elements
+
+
+# --------------------------------------------------------------------------- splitting
+
+def _split_at(elements: list[dict], starts: list[tuple[int, float, str]]) -> list[tuple[str, list[dict]]]:
+    """Cut the element stream at (page, y) positions. Content before the first cut
+    (front matter) joins the first part; empty parts are dropped."""
+    parts: list[tuple[str, list[dict]]] = []
+    starts = sorted(starts, key=lambda s: (s[0], s[1]))
+    i = 0
+    for k, (page, y, name) in enumerate(starts):
+        nxt = starts[k + 1] if k + 1 < len(starts) else None
+        chunk = []
+        while i < len(elements):
+            el = elements[i]
+            if nxt and (el["page"], el["y"]) >= (nxt[0], nxt[1] - 2):
+                break
+            chunk.append(el)
+            i += 1
+        if chunk:
+            parts.append((name, chunk))
+    return parts
+
+
+def split_by_bookmarks(doc: fitz.Document, elements: list[dict]) -> list:
+    toc = doc.get_toc(simple=False)
+    if not toc:
+        return []
+    top = min(e[0] for e in toc)
+    entries = [e for e in toc if e[0] == top]
+    if len(entries) == 1:  # a single root bookmark (the book itself): use its children
+        entries = [e for e in toc if e[0] == top + 1]
+    starts = []
+    for lvl, name, page, dest in entries:
+        if page < 1:
+            continue
+        to = dest.get("to") if isinstance(dest, dict) else None
+        y = float(to.y) if to is not None and 0 <= to.y <= doc[page - 1].rect.height else 0.0
+        starts.append((page - 1, y, clean(name).strip()))
+    if len(starts) < 2:
+        return []
+    starts[0] = (0, 0.0, starts[0][2])  # front matter belongs to the first part
+    return _split_at(elements, starts)
+
+
+def split_by_headings(elements: list[dict], n_pages: int) -> list:
+    """Split at the largest font-size heading level that marks at least two
+    chapters; adjacent heading blocks (a heading broken over lines) count once."""
+    for kind in ("h2", "h3", "h4"):
+        starts, prev_heading = [], False
+        for el in elements:
+            is_h = el.get("sized") and el["kind"] == kind
+            if is_h and prev_heading:
+                starts[-1] = (starts[-1][0], starts[-1][1], f"{starts[-1][2]} {el['text']}")
+            elif is_h:
+                starts.append((el["page"], el["y"], el["text"]))
+            prev_heading = is_h
+        # sections on (almost) every page are not chapters
+        if 2 <= len(starts) <= max(2, n_pages // 2):
+            starts[0] = (0, 0.0, starts[0][2])
+            parts = _split_at(elements, starts)
+            if len(parts) >= 2:
+                return parts
+        if len(starts) > 1:
+            return []  # too frequent to be chapters; smaller levels would be worse
+        # 0 or 1 heading at this level (e.g. only the document title): try the next
+    return []
+
+
+def split_by_pages(elements: list[dict], n_pages: int) -> list:
+    n = ceil(n_pages / CHUNK_PAGES)
+    size = ceil(n_pages / n)
+    return _split_at(elements, [(k * size, 0.0, "") for k in range(n)])
+
+
+def split_parts(doc: fitz.Document, elements: list[dict]) -> tuple[list, str]:
+    for method, parts in (("bookmarks", lambda: split_by_bookmarks(doc, elements)),
+                          ("headings", lambda: split_by_headings(elements, len(doc))),
+                          ("pages", lambda: split_by_pages(elements, len(doc)))):
+        found = parts()
+        if len(found) >= 2:
+            return found, method
+    return [("", elements)], "none"
 
 
 def _continues(prev: str, nxt: str) -> bool:
@@ -486,9 +575,17 @@ env = Environment(loader=FileSystemLoader(TEMPLATES),
                   autoescape=select_autoescape(["html", "xml"]))
 
 
-def render_body(elements: list[dict], title: str, ocr: bool) -> str:
-    """Article body fragment with relative URLs (img-N.png, original.pdf)."""
+def render_body(elements: list[dict], title: str, ocr: bool,
+                nav: list[tuple[str, str]] | None = None, pdf_href: str = "original.pdf") -> str:
+    """Article body fragment with relative URLs (img-N.png, original.pdf).
+    `nav` is a list of (label, href) links shown at the top and bottom (parts)."""
     out = []
+    nav_html = ""
+    if nav:
+        nav_html = '<p class="nav">' + " · ".join(
+            f'<a href="{html.escape(h)}">{html.escape(l)}</a>' if h else html.escape(l)
+            for l, h in nav) + "</p>"
+        out.append(nav_html)
     if ocr:
         out.append('<p><em>OCR applied: some pages were scanned images; their text '
                    'was recognised automatically and may contain errors.</em></p>')
@@ -510,20 +607,71 @@ def render_body(elements: list[dict], title: str, ocr: bool) -> str:
         else:
             for part in el["text"].replace(GLUE, "").split(PARA_BREAK):
                 out.append(f'<{el["kind"]}>{html.escape(part)}</{el["kind"]}>')
-    out.append('<hr><p><a href="original.pdf">Original PDF</a></p>')
+    out.append("<hr>")
+    if nav_html:
+        out.append(nav_html)
+    out.append(f'<p><a href="{pdf_href}">Original PDF</a></p>')
     return "\n".join(out) + "\n"
 
 
 def absolutize(fragment: str, base: str) -> str:
     return re.sub(r'(src|href)="(?![a-z][a-z0-9+.-]*:|/|#)([^"]+)"',
-                  lambda m: f'{m.group(1)}="{base}{m.group(2)}"', fragment)
+                  lambda m: f'{m.group(1)}="{urljoin(base, m.group(2))}"', fragment)
 
 
-def write_article_page(a: dict, body: str) -> None:
+def write_article_page(a: dict, body: str, part: dict | None = None) -> None:
+    d = SITE / "articles" / a["slug"]
+    if part:
+        d /= part["path"]
     page = env.get_template("article.html").render(
-        title=a["title"], author=a.get("author", ""), date=a["date"], body=body,
-        site_title=SITE_TITLE)
+        title=part["title"] if part else a["title"], author=a.get("author", ""),
+        date=part["date"] if part else a["date"], body=body, site_title=SITE_TITLE,
+        root="../../../" if part else "../../")
+    (d / "index.html").write_text(page, encoding="utf-8")
+
+
+def write_parts_index(a: dict) -> None:
+    """articles/<slug>/ for a split PDF: list of its parts."""
+    page = env.get_template("parts.html").render(a=a, site_title=SITE_TITLE)
     (SITE / "articles" / a["slug"] / "index.html").write_text(page, encoding="utf-8")
+
+
+def render_all_pages(articles: list[dict]) -> None:
+    """Re-render every page from stored fragments so template changes apply to all."""
+    for a in articles:
+        if not (SITE / "articles" / a["slug"]).is_dir():
+            continue
+        if a.get("parts"):
+            for part in a["parts"]:
+                frag = CONTENT / a["slug"] / f"{part['path']}.html"
+                if frag.exists() and (SITE / "articles" / a["slug"] / part["path"]).is_dir():
+                    write_article_page(a, frag.read_text(encoding="utf-8"), part)
+            write_parts_index(a)
+        else:
+            frag = CONTENT / f"{a['slug']}.html"
+            if frag.exists():
+                write_article_page(a, frag.read_text(encoding="utf-8"))
+
+
+def feed_items(articles: list[dict]) -> list[dict]:
+    """One feed item per article, or per part for split PDFs; newest first."""
+    items = []
+    for a in articles:
+        if a.get("parts"):
+            for part in a["parts"]:
+                items.append({"path": f"{a['slug']}/{part['path']}/", "title": part["title"],
+                              "author": a.get("author", ""), "date": part["date"],
+                              "frag": CONTENT / a["slug"] / f"{part['path']}.html",
+                              "pdf": SITE / "articles" / a["slug"] / "original.pdf",
+                              "pdf_href": "../original.pdf"})
+        else:
+            items.append({"path": f"{a['slug']}/", "title": a["title"],
+                          "author": a.get("author", ""), "date": a["date"],
+                          "frag": CONTENT / f"{a['slug']}.html",
+                          "pdf": SITE / "articles" / a["slug"] / "original.pdf",
+                          "pdf_href": "original.pdf"})
+    items.sort(key=lambda i: i["date"], reverse=True)
+    return items
 
 
 def repo_and_branch() -> tuple[str, str]:
@@ -563,23 +711,22 @@ def write_feed(articles: list[dict], base: str) -> None:
     fg.link(href=f"{base}/", rel="alternate")
     fg.link(href=f"{base}/feed.xml", rel="self")
     fg.language("hu")
-    newest = articles[:FEED_LIMIT]
+    newest = feed_items(articles)[:FEED_LIMIT]
     entry_links = []
     fg.updated(datetime.fromisoformat(newest[0]["date"]) if newest
                else datetime(2000, 1, 1, tzinfo=timezone.utc))
     for a in newest:
-        url = f"{base}/articles/{a['slug']}/"
-        frag_path = CONTENT / f"{a['slug']}.html"
-        frag = frag_path.read_text(encoding="utf-8") if frag_path.exists() else ""
+        url = f"{base}/articles/{a['path']}"
+        frag = a["frag"].read_text(encoding="utf-8") if a["frag"].exists() else ""
         date = datetime.fromisoformat(a["date"])
         fe = fg.add_entry(order="append")
         fe.id(url)
         fe.title(a["title"])
         if a.get("author"):
             fe.author({"name": a["author"]})
-        pdf = SITE / "articles" / a["slug"] / "original.pdf"
+        pdf = a["pdf"]
         links = [{"href": url, "rel": "alternate", "type": "text/html"},
-                 {"href": f"{url}original.pdf", "rel": "enclosure", "type": "application/pdf",
+                 {"href": urljoin(url, a["pdf_href"]), "rel": "enclosure", "type": "application/pdf",
                   "title": "Original PDF",
                   "length": str(pdf.stat().st_size) if pdf.exists() else "0"}]
         fe.link(links)
@@ -630,21 +777,72 @@ def process(pdf: Path, articles: list[dict]) -> dict:
             author = detect_author(doc, title, 0 in ocr_pages)
         slug = unique_slug(title, digest, {a["slug"] for a in articles})
         outdir = SITE / "articles" / slug
+        work = Path(tmp) / "img"
+        work.mkdir()
         outdir.mkdir(parents=True, exist_ok=True)
         try:
-            elements = extract(src, outdir, ocr_pages)
+            elements = extract(src, work, ocr_pages)
+            article = {"slug": slug, "title": title, "author": author, "date": date.isoformat(),
+                       "source": pdf.name, "sha256": digest, "ocr": bool(ocr_pages)}
+            with fitz.open(src) as doc:
+                n_pages = len(doc)
+                parts, method = (split_parts(doc, elements) if n_pages >= SPLIT_MIN_PAGES
+                                 else ([("", elements)], "none"))
+            if len(parts) > 1:
+                print(f"  {n_pages} pages -> {len(parts)} parts (split by {method})")
+                write_parts(article, parts, work, date)
+            else:
+                for f in work.iterdir():
+                    shutil.move(str(f), outdir / f.name)
+                body = render_body(elements, title, bool(ocr_pages))
+                CONTENT.mkdir(parents=True, exist_ok=True)
+                (CONTENT / f"{slug}.html").write_text(body, encoding="utf-8")
+                write_article_page(article, body)
         except Exception:
             shutil.rmtree(outdir, ignore_errors=True)  # retried on the next run
+            shutil.rmtree(CONTENT / slug, ignore_errors=True)
             raise
     shutil.copy2(pdf, outdir / "original.pdf")
-    body = render_body(elements, title, bool(ocr_pages))
-    CONTENT.mkdir(parents=True, exist_ok=True)
-    (CONTENT / f"{slug}.html").write_text(body, encoding="utf-8")
-    article = {"slug": slug, "title": title, "author": author, "date": date.isoformat(),
-               "source": pdf.name, "sha256": digest, "ocr": bool(ocr_pages)}
-    write_article_page(article, body)
     article["source"] = move_to_processed(pdf, digest)
     return article
+
+
+def write_parts(article: dict, parts: list, work: Path, date: datetime) -> None:
+    """Write site/articles/<slug>/part-NN/ for each part, with its own figures,
+    previous/next links and timestamps one minute apart (part 1 oldest)."""
+    slug, title, m = article["slug"], article["title"], len(parts)
+    norm = lambda t: re.sub(r"\W+", " ", t).strip().lower()
+    meta = []
+    for n, (chapter, _) in enumerate(parts, 1):
+        chapter = re.sub(r"\s+", " ", chapter).strip()
+        if norm(chapter) == norm(title):
+            chapter = ""  # the first chapter is often the paper's own title
+        full = f"{title} — Part {n}/{m}" + (f": {chapter}" if chapter else "")
+        meta.append({"n": n, "path": f"part-{n:02d}", "title": full, "chapter": chapter,
+                     "date": (date + timedelta(minutes=n - 1)).isoformat()})
+    (CONTENT / slug).mkdir(parents=True, exist_ok=True)
+    for i, (part, (_, els)) in enumerate(zip(meta, parts)):
+        d = SITE / "articles" / slug / part["path"]
+        d.mkdir(parents=True, exist_ok=True)
+        els = [dict(e) for e in els]
+        k = 0
+        for e in els:  # each part gets its own img-1.png, img-2.png, ...
+            if e["kind"] == "img":
+                k += 1
+                shutil.copy2(work / e["src"], d / f"img-{k}.png")
+                e["src"] = f"img-{k}.png"
+        label = lambda p: f"Part {p['n']}" + (f": {p['chapter']}" if p["chapter"] else "")
+        nav = [(f"Part {part['n']} of {m}", "../")]
+        if i > 0:
+            nav.append((f"← {label(meta[i - 1])}", f"../{meta[i - 1]['path']}/"))
+        if i + 1 < m:
+            nav.append((f"{label(meta[i + 1])} →", f"../{meta[i + 1]['path']}/"))
+        skip = part["chapter"] or title
+        body = render_body(els, skip, article["ocr"] and i == 0, nav, "../original.pdf")
+        (CONTENT / slug / f"{part['path']}.html").write_text(body, encoding="utf-8")
+        write_article_page(article, body, part)
+    article["parts"] = meta
+    write_parts_index(article)
 
 
 def backfill_authors(articles: list[dict]) -> None:
@@ -682,18 +880,16 @@ def main() -> int:
         articles.append(a)
         known.add(digest)
         save_articles(articles)
-        print(f"  -> articles/{a['slug']}/  ({a['title']})")
+        print(f"  -> articles/{a['slug']}/  ({a['title']})"
+              + (f", {len(a['parts'])} parts" if a.get("parts") else ""))
 
     backfill_authors(articles)
     save_articles(articles)
     SITE.mkdir(exist_ok=True)
-    for a in articles:  # re-render pages so template/metadata changes apply to all
-        frag = CONTENT / f"{a['slug']}.html"
-        if frag.exists() and (SITE / "articles" / a["slug"]).is_dir():
-            write_article_page(a, frag.read_text(encoding="utf-8"))
+    render_all_pages(articles)
     write_index(articles, base)
     write_feed(articles, base)
-    print(f"feed: {base}/feed.xml ({min(len(articles), FEED_LIMIT)} entries)")
+    print(f"feed: {base}/feed.xml ({min(len(feed_items(articles)), FEED_LIMIT)} entries)")
     return 1 if failures else 0
 
 

@@ -11,7 +11,10 @@
 <h1>{{ site_title }}</h1>
 <p class="meta"><a href="upload/">Add PDFs</a> · <a href="feed.xml">Atom feed</a></p>
 <ul>
-{% for a in articles %}  <li><a href="articles/{{ a.slug }}/">{{ a.title }}</a> <span class="meta">{% if a.author %}{{ a.author }} · {% endif %}{{ a.date[:10] }}</span></li>
+{% for a in articles %}  <li><a href="articles/{{ a.slug }}/">{{ a.title }}</a> <span class="meta">{% if a.author %}{{ a.author }} · {% endif %}{{ a.date[:10] }}{% if a.parts %} · {{ a.parts|length }} parts{% endif %}</span>
+{%- if a.parts %}
+    <ul>{% for p in a.parts %}<li><a href="articles/{{ a.slug }}/{{ p.path }}/">Part {{ p.n }}{% if p.chapter %}: {{ p.chapter }}{% endif %}</a></li>{% endfor %}</ul>
+{%- endif %}</li>
 {% else %}  <li>No articles yet.</li>
 {% endfor %}</ul>
 </body>
