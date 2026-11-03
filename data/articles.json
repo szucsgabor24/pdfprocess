@@ -1,5 +1,97 @@
 [
   {
+    "slug": "earning-from-history-financial-markets-and-the-approach-of",
+    "title": "Earning from History? Financial Markets and the Approach of World Wars",
+    "author": "Niall Ferguson",
+    "date": "2026-11-03T11:07:51+00:00",
+    "source": "2008a_bpea_ferguson.pdf",
+    "sha256": "a66d4239c352590ac157721553db2b533a365aacd9a29d4f705050e94d6edc9a",
+    "ocr": false,
+    "parts": [
+      {
+        "n": 1,
+        "path": "part-01",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 1/7: Comparing World Wars",
+        "chapter": "Comparing World Wars",
+        "date": "2026-11-03T11:07:51+00:00"
+      },
+      {
+        "n": 2,
+        "path": "part-02",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 2/7: 1914: A Bolt from the Blue",
+        "chapter": "1914: A Bolt from the Blue",
+        "date": "2026-11-03T11:08:51+00:00"
+      },
+      {
+        "n": 3,
+        "path": "part-03",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 3/7: History and Uncertainty",
+        "chapter": "History and Uncertainty",
+        "date": "2026-11-03T11:09:51+00:00"
+      },
+      {
+        "n": 4,
+        "path": "part-04",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 4/7: “Interminable Overture”",
+        "chapter": "“Interminable Overture”",
+        "date": "2026-11-03T11:10:51+00:00"
+      },
+      {
+        "n": 5,
+        "path": "part-05",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 5/7: Third Time Lucky",
+        "chapter": "Third Time Lucky",
+        "date": "2026-11-03T11:11:51+00:00"
+      },
+      {
+        "n": 6,
+        "path": "part-06",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 6/7: Conclusion",
+        "chapter": "Conclusion",
+        "date": "2026-11-03T11:12:51+00:00"
+      },
+      {
+        "n": 7,
+        "path": "part-07",
+        "title": "Earning from History? Financial Markets and the Approach of World Wars — Part 7/7: Comments and Discussion",
+        "chapter": "Comments and Discussion",
+        "date": "2026-11-03T11:13:51+00:00"
+      }
+    ]
+  },
+  {
+    "slug": "artificial-intelligence-meets-natural-stupidity-managing",
+    "title": "Artificial Intelligence Meets Natural Stupidity: Managing the Risks",
+    "author": "Amory B. Lovins",
+    "date": "2026-11-03T11:07:51+00:00",
+    "source": "Artificial Intelligence Meets Natural Stupidity Managing the Risks.pdf",
+    "sha256": "15271943cb0dd925d4a44e2c8d84100e31124bae290070678006e7912845ec04",
+    "ocr": false,
+    "parts": [
+      {
+        "n": 1,
+        "path": "part-01",
+        "title": "Artificial Intelligence Meets Natural Stupidity: Managing the Risks — Part 1/3",
+        "chapter": "",
+        "date": "2026-11-03T11:07:51+00:00"
+      },
+      {
+        "n": 2,
+        "path": "part-02",
+        "title": "Artificial Intelligence Meets Natural Stupidity: Managing the Risks — Part 2/3",
+        "chapter": "",
+        "date": "2026-11-03T11:08:51+00:00"
+      },
+      {
+        "n": 3,
+        "path": "part-03",
+        "title": "Artificial Intelligence Meets Natural Stupidity: Managing the Risks — Part 3/3",
+        "chapter": "",
+        "date": "2026-11-03T11:09:51+00:00"
+      }
+    ]
+  },
+  {
     "slug": "scenarios-uncharted-waters-ahead",
     "title": "Scenarios: Uncharted Waters Ahead",
     "author": "Pierre Wack",
