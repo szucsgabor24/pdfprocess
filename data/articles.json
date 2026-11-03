@@ -1,14 +1,5 @@
 [
   {
-    "slug": "artificial-intelligence-meets-natural-stupidity-managing",
-    "title": "Artificial Intelligence Meets Natural Stupidity: Managing the Risks",
-    "author": "Amory B. Lovins",
-    "date": "2026-11-03T09:46:18+01:00",
-    "source": "Artificial Intelligence Meets Natural Stupidity Managing the Risks.pdf",
-    "sha256": "15271943cb0dd925d4a44e2c8d84100e31124bae290070678006e7912845ec04",
-    "ocr": false
-  },
-  {
     "slug": "scenarios-uncharted-waters-ahead",
     "title": "Scenarios: Uncharted Waters Ahead",
     "author": "Pierre Wack",
@@ -16,14 +7,5 @@
     "source": "Scenarios Uncharted Waters Ahead.pdf",
     "sha256": "64951ec60d519cd6ff9a9417ba6279195a4d21f58dc91f5e86ed9d55e655110a",
     "ocr": false
-  },
-  {
-    "slug": "earning-from-history-financial-markets-and-the-approach-of-a66d42",
-    "title": "Earning from History? Financial Markets and the Approach of World Wars",
-    "date": "2026-11-02T20:23:56+00:00",
-    "source": "2008a_bpea_ferguson.pdf",
-    "sha256": "a66d4239c352590ac157721553db2b533a365aacd9a29d4f705050e94d6edc9a",
-    "ocr": false,
-    "author": "Niall Ferguson"
   }
 ]

@@ -525,28 +525,63 @@ def split_by_bookmarks(doc: fitz.Document, elements: list[dict]) -> list:
     return _split_at(elements, starts)
 
 
-def split_by_headings(elements: list[dict], n_pages: int) -> list:
-    """Split at the largest font-size heading level that marks at least two
-    chapters; adjacent heading blocks (a heading broken over lines) count once."""
-    for kind in ("h2", "h3", "h4"):
-        starts, prev_heading = [], False
-        for el in elements:
-            is_h = el.get("sized") and el["kind"] == kind
-            if is_h and prev_heading:
-                starts[-1] = (starts[-1][0], starts[-1][1], f"{starts[-1][2]} {el['text']}")
-            elif is_h:
-                starts.append((el["page"], el["y"], el["text"]))
-            prev_heading = is_h
-        # sections on (almost) every page are not chapters
-        if 2 <= len(starts) <= max(2, n_pages // 2):
-            starts[0] = (0, 0.0, starts[0][2])
-            parts = _split_at(elements, starts)
-            if len(parts) >= 2:
-                return parts
-        if len(starts) > 1:
-            return []  # too frequent to be chapters; smaller levels would be worse
-        # 0 or 1 heading at this level (e.g. only the document title): try the next
+LEVELS = ("h2", "h3", "h4")
+BACK_MATTER = re.compile(r"^(references|bibliography|works cited|literature|notes|endnotes|"
+                         r"irodalom|irodalomjegyzék|felhasznált irodalom|hivatkozások|"
+                         r"jegyzetek)$", re.I)
+
+
+def _span(elements: list[dict]) -> int:
+    return elements[-1]["page"] - elements[0]["page"] + 1 if elements else 0
+
+
+def _heading_starts(elements: list[dict], kind: str) -> list[tuple[int, float, str]]:
+    """Positions of headings of one level; h2/h3 must come from font size, h4 may
+    also be bold body-size text. Adjacent heading blocks (one heading broken over
+    lines) count once."""
+    starts, prev = [], False
+    for el in elements:
+        is_h = el["kind"] == kind and (el.get("sized") or kind == "h4")
+        if is_h and prev:
+            starts[-1] = (starts[-1][0], starts[-1][1], f"{starts[-1][2]} {el['text']}")
+        elif is_h:
+            starts.append((el["page"], el["y"], el["text"]))
+        prev = is_h
+    return starts
+
+
+def split_by_headings(elements: list[dict], levels: tuple = LEVELS) -> list:
+    """Split at the largest heading level that marks at least two chapters (a
+    level used once, e.g. only for the title, is skipped). A chapter still longer
+    than 20 pages is split again at the next heading level below."""
+    pages = _span(elements)
+    for i, kind in enumerate(levels):
+        starts = _heading_starts(elements, kind)
+        if len(starts) < 2:
+            continue
+        if len(starts) > max(2, pages // 2):
+            return []  # sections on (almost) every page are not chapters
+        starts[0] = (elements[0]["page"], -1.0, starts[0][2])  # front matter joins part 1
+        parts = _split_at(elements, starts)
+        if len(parts) < 2:
+            return []
+        out = []
+        for name, els in parts:
+            sub = split_by_headings(els, levels[i + 1:]) if _span(els) >= SPLIT_MIN_PAGES else []
+            out.extend(sub if len(sub) >= 2 else [(name, els)])
+        return out
     return []
+
+
+def merge_back_matter(parts: list) -> list:
+    """References, bibliography etc. are appended to the previous part."""
+    out: list = []
+    for name, els in parts:
+        if out and BACK_MATTER.match(re.sub(r"[\W\d]+$", "", name.strip())):
+            out[-1] = (out[-1][0], out[-1][1] + els)
+        else:
+            out.append((name, els))
+    return out
 
 
 def split_by_pages(elements: list[dict], n_pages: int) -> list:
@@ -557,9 +592,9 @@ def split_by_pages(elements: list[dict], n_pages: int) -> list:
 
 def split_parts(doc: fitz.Document, elements: list[dict]) -> tuple[list, str]:
     for method, parts in (("bookmarks", lambda: split_by_bookmarks(doc, elements)),
-                          ("headings", lambda: split_by_headings(elements, len(doc))),
+                          ("headings", lambda: split_by_headings(elements)),
                           ("pages", lambda: split_by_pages(elements, len(doc)))):
-        found = parts()
+        found = merge_back_matter(parts())
         if len(found) >= 2:
             return found, method
     return [("", elements)], "none"
@@ -576,7 +611,8 @@ env = Environment(loader=FileSystemLoader(TEMPLATES),
 
 
 def render_body(elements: list[dict], title: str, ocr: bool,
-                nav: list[tuple[str, str]] | None = None, pdf_href: str = "original.pdf") -> str:
+                nav: list[tuple[str, str]] | None = None, pdf_href: str = "original.pdf",
+                chapter: str = "") -> str:
     """Article body fragment with relative URLs (img-N.png, original.pdf).
     `nav` is a list of (label, href) links shown at the top and bottom (parts)."""
     out = []
@@ -599,7 +635,9 @@ def render_body(elements: list[dict], title: str, ocr: bool,
             merged.append(dict(el))
     norm = lambda t: re.sub(r"\W+", " ", t).strip().lower()
     title_done = False
-    for el in merged:
+    for i, el in enumerate(merged):
+        if i == 0 and chapter and el["kind"].startswith("h") and norm(el["text"]) == norm(chapter):
+            continue  # the part's title already names this chapter
         if el["kind"] == "img":
             out.append(f'<figure><img src="{el["src"]}" alt="" loading="lazy"></figure>')
         elif not title_done and el["kind"].startswith("h") and norm(el["text"]) == norm(title):
@@ -837,8 +875,8 @@ def write_parts(article: dict, parts: list, work: Path, date: datetime) -> None:
             nav.append((f"← {label(meta[i - 1])}", f"../{meta[i - 1]['path']}/"))
         if i + 1 < m:
             nav.append((f"{label(meta[i + 1])} →", f"../{meta[i + 1]['path']}/"))
-        skip = part["chapter"] or title
-        body = render_body(els, skip, article["ocr"] and i == 0, nav, "../original.pdf")
+        body = render_body(els, title, article["ocr"] and i == 0, nav, "../original.pdf",
+                           chapter=part["chapter"])
         (CONTENT / slug / f"{part['path']}.html").write_text(body, encoding="utf-8")
         write_article_page(article, body, part)
     article["parts"] = meta
